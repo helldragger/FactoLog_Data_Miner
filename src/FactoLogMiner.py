@@ -16,9 +16,8 @@ if __name__ == "__main__":
         raise Exception(logfilepath+" does not exists.")
 
     gamename = args[1]
+    print("Parsing " + logfilepath + " ...")
     logdata, item_name_list= parseLogFile(logfilepath)
-
-    print(logdata)
-
+    print("Generating basic statistics...")
     genStatsPlot(logdata, item_name_list)
     pass

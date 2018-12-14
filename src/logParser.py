@@ -78,7 +78,6 @@ def parseLogFile(filepath:str):
             timestamp, datatype, force, data = parseLineData(line)
             #removing the \n from the end of line
             data = data[:-1:]
-            print(timestamp,datatype,force,data)
             processed_data = processData(datatype, data)
             if len(processed_data.keys()) != 0:
                 if force not in logdata.keys():
