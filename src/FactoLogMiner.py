@@ -1,5 +1,4 @@
 from logParser import parseLogFile
-from statistics import genStatsPlot
 
 
 if __name__ == "__main__":
@@ -16,8 +15,12 @@ if __name__ == "__main__":
         raise Exception(logfilepath+" does not exists.")
 
     gamename = args[1]
+
+    args = args[2::]
+
     print("Parsing " + logfilepath + " ...")
-    logdata, item_name_list= parseLogFile(logfilepath)
+    parseLogFile(logfilepath, gamename)
+
     print("Generating basic statistics...")
-    genStatsPlot(logdata, item_name_list)
+
     pass
