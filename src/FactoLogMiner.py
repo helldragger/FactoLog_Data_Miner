@@ -20,7 +20,4 @@ if __name__ == "__main__":
 
     print("Parsing " + logfilepath + " ...")
     parseLogFile(logfilepath, gamename)
-
-    print("Generating basic statistics...")
-
     pass
