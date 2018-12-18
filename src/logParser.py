@@ -24,8 +24,16 @@ def createTable(table_name: str, args: str):
 def prepareDbTables():
     global DB
     c = DB.cursor()
-    createTable("stat_tables", "tablename text UNIQUE")
+    createTable("stat_tables",
+                "tablename text UNIQUE, datatype text, measure text")
     createTable("event_tables", "tablename text UNIQUE")
+    createTable("forces", "force text UNIQUE")
+
+    createTable("researches", "name text UNIQUE")
+    createTable("research_unlock",
+                "r_name text, unlocked_type text, unlocked_name text")
+    createTable("research_prereq", "r_name text, prereq_r_name text")
+
     # prod stats tables
     for stat_type in valid_stats_type_kw:
         createTable(stat_type, ",".join(
@@ -58,15 +66,15 @@ def prepareDbTables():
 
             try:
                 c.execute(f"INSERT INTO stat_tables VALUES ('" \
-                          f"{stat_type}_INPUT')")
+                          f"{stat_type}_INPUT', '{stat_type}', 'INPUT')")
                 print("O)   REGISTERED VIEW", stat_type + "_INPUT")
 
                 c.execute(f"INSERT INTO stat_tables VALUES ('" \
-                          f"{stat_type}_OUTPUT')")
+                          f"{stat_type}_OUTPUT', '{stat_type}', 'OUTPUT')")
                 print("O)   REGISTERED VIEW", stat_type + "_OUTPUT")
 
                 c.execute(f"INSERT INTO stat_tables VALUES ('" \
-                          f"{stat_type}_STOCK')")
+                          f"{stat_type}_STOCK', '{stat_type}', 'STOCK')")
                 print("O)   REGISTERED VIEW", stat_type + "_STOCK")
 
             except Exception as e:
@@ -223,20 +231,75 @@ def parseLineData(linestr: str):
     return (timestamp, datatype, datainfo, data)
 
 
-def parseLogFile(filepath: str, gamename: str):
+def parseTechLine(linestr: str):
+    # format => research-name:name;<unlocked-items;item-1;...;><unlocked-fluids
+    # ;fluid-1;...;><prerequisite_researches;r_name-1;...;>
+    line = linestr.split(";")[:-1:]
+    r_name = line[0].split(":")[1]
+    line = line[1::]
+
+    current_section = None
+
+    unlocked = []
+    prereq_r_names = []
+
+    for word in line:
+        if word == "unlocked-items":
+            current_section = "SOLID"
+        elif word == "unlocked-fluids":
+            current_section = "FLUID"
+        elif word == "prerequisites-researches":
+            current_section = "RESEARCH"
+        else:
+            if current_section == "SOLID":
+                unlocked.append(("SOLID", word))
+            elif current_section == "FLUID":
+                unlocked.append(("FLUID", word))
+            elif current_section == "RESEARCH":
+                prereq_r_names.append(word)
+            else:
+                raise Exception("UNKNOWN TECH DATA TYPE: " + word)
+    return (r_name, unlocked, prereq_r_names)
+
+
+def parseLogFile(logfilepath: str, techdatapath: str, gamename: str):
     # returns a dict with each force linked to a tuple containing an array of
     # timestamp and an array of each data contained at each timestamp
     global DB
     DB = sqlite3.connect("resources/" + gamename + ".db")
-    print("sqlite version", sqlite3.sqlite_version)
-    prepareDbTables()
 
-    with open(filepath, "r") as logfile:
+    print("sqlite version", sqlite3.sqlite_version)
+
+    prepareDbTables()
+    c = DB.cursor()
+
+    print("Parsing log file data...")
+    with open(logfilepath, "r") as logfile:
         for line in logfile.readlines():
             timestamp, datatype, force, data = parseLineData(line)
+            c.execute(f"INSERT OR IGNORE INTO forces VALUES ('{force}') ")
+            DB.commit()
+
             # removing the \n from the end of line
             data = data[:-1:]
             processData(force, datatype, data, timestampToStr(timestamp))
+
+    print("Parsing tech tree data...")
+    with open(techdatapath, "r") as techfile:
+        for line in techfile.readlines():
+            r_name, unlocked, prereq_r_names = parseTechLine(line)
+            c.execute(f"INSERT INTO researches VALUES ('{r_name}')")
+            DB.commit()
+
+            for unlock in unlocked:
+                c.execute(f"INSERT INTO research_unlock VALUES ('{r_name}', "
+                          f"'{unlock[0]}', '{unlock[1]}')")
+                DB.commit()
+
+            for prereq_r_name in prereq_r_names:
+                c.execute(f"INSERT INTO research_prereq VALUES ('{r_name}', "
+                          f"'{prereq_r_name}')")
+                DB.commit()
 
     DB.close()
     return
