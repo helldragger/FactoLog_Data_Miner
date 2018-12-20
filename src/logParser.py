@@ -95,7 +95,7 @@ def prepareDbTables():
 
         c.execute("""
         CREATE VIEW IF NOT EXISTS researches_prerequisites as 
-        SELECT r.force, r.ig_tick, r.ig_date, r.data_name, r.data_value 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name, r.value 
         FROM raw_data r
         JOIN last_update lu
         WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == "RESEARCH" and r.data_subtype == 
