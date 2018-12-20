@@ -1,12 +1,28 @@
 import sqlite3
 
 
-valid_datatypes = ["STATS", "EVENT"]
-valid_stats_type_kw = ["SOLID", "FLUID", "KILLS", "BUILD", "LAUNCHED",
-                       "ROCKETS", "EVOLUTION"]
-valid_stats_section_kw = ["INPUT", "OUTPUT"]
-valid_events_kw = ["RESEARCHED"]
-item_name_set = set()
+valid_data_trees = {
+    "SOLID":     ["INPUT", "OUTPUT"],
+    "FLUID":     ["INPUT", "OUTPUT"],
+    "KILLS":     ["INPUT", "OUTPUT"],
+    "BUILD":     ["INPUT", "OUTPUT"],
+    "LAUNCHED":  [],
+    "ROCKETS":   [],
+    "EVOLUTION": [],
+    "RESEARCH":  ["COMPLETED", "PREREQUISITE"],
+    "UNLOCKED":  ["RECIPE", "SOLID", "FLUID", "GIVEN_ITEM", "TURRET_ATTACK",
+                  "GUN_SPEED", "OTHERS"]
+}
+stat_data_trees_roots = filter(
+    lambda key: valid_data_trees[key] == ["INPUT", "OUTPUT"],
+    valid_data_trees.keys())
+
+migration_values = {
+    "RESEARCHED":               ("RESEARCH", "COMPLETED"),
+    "unlocked-items":           ("UNLOCKED", "SOLID"),
+    "unlocked-fluids":          ("UNLOCKED", "FLUID"),
+    "prerequisites-researches": ("RESEARCH", "PREREQUISITE")
+}
 
 
 def createTable(table_name: str, args: str):
@@ -18,183 +34,226 @@ def createTable(table_name: str, args: str):
         print("O)   TABLE " + table_name + " has been created".upper())
     except Exception as e:
         # alreadyExists
-        print("X)   TABLE " + table_name + " already exists:".upper(), e)
+        print("X)   TABLE " + table_name + " could not be created:".upper(), e)
 
 
 def prepareDbTables():
     global DB
     c = DB.cursor()
-    createTable("stat_tables",
-                "tablename text UNIQUE, datatype text, measure text")
-    createTable("event_tables", "tablename text UNIQUE")
-    createTable("forces", "force text UNIQUE")
+    createTable("stat_views", "view_name text UNIQUE")
 
-    createTable("researches", "name text UNIQUE")
-    createTable("research_unlock",
-                "r_name text, unlocked_type text, unlocked_name text")
-    createTable("research_prereq", "r_name text, prereq_r_name text")
+    createTable("raw_data", "date text NOT NULL, game_name text NOT NULL, "
+                            "force text NOT NULL, ig_date text NOT NULL, "
+                            "ig_tick numeric NOT NULL, data_type text NOT NULL, "
+                            "data_subtype text NOT NULL, data_name text NOT "
+                            "NULL, "
+                            "value text ")
+
+    createTable("analyzed_data", "date text NOT NULL, game_name text NOT "
+                                 "NULL, "
+                                 "force text NOT NULL, ig_date text NOT NULL, "
+                                 "ig_tick numeric NOT NULL, data_type text NOT NULL, "
+                                 "data_subtype text NOT NULL, data_name text NOT "
+                                 "NULL, "
+                                 "analysis_type text NOT NULL,"
+                                 "analysis_subtype text NOT NULL, analysis_name "
+                                 " text NOT NULL, value text")
+
+    try:
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS last_update AS
+        SELECT max(date) AS date, game_name
+        FROM raw_data 
+        GROUP BY game_name
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS last_data AS
+        SELECT r.* 
+        FROM raw_data r
+        JOIN last_update lu 
+        WHERE r.date =lu.date
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS forces AS 
+        SELECT r.ig_tick, r.ig_date, r.force 
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name
+        GROUP BY r.force
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS completed_researches AS 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name, r.value 
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == "RESEARCH" and r.data_subtype == 
+        "COMPLETED"
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS researches_prerequisites as 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name, r.data_value 
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == "RESEARCH" and r.data_subtype == 
+        "PREREQUISITE"
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS unlocked_items AS 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name , r.value 
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == 
+        "UNLOCKED" and r.data_subtype == "SOLID"
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS unlocked_fluids AS 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name , r.value 
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == 
+        "UNLOCKED" and r.data_subtype == "FLUID"
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS unlocked_recipes AS 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name , r.value 
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == 
+        "UNLOCKED" and r.data_subtype == "RECIPE"
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS unlocked_gifts AS 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name , r.value
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == 
+        "UNLOCKED" and r.data_subtype == "ITEM_GIVEN"
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS unlocked_turret_attack AS 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name , r.value
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == 
+        "UNLOCKED" and r.data_subtype == "TURRET_ATTACK"
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS unlocked_gun_speed AS 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name , r.value
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == 
+        "UNLOCKED" and r.data_subtype == "GUN_SPEED"
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS unlocked_others AS 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name , r.value
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == 
+        "UNLOCKED" and r.data_subtype == "OTHERS"
+        """)
+
+        c.execute("""
+        CREATE VIEW IF NOT EXISTS unlocked_all AS 
+        SELECT r.force, r.ig_tick, r.ig_date, r.data_name, r.value 
+        FROM raw_data r
+        JOIN last_update lu
+        WHERE r.date=lu.date and r.game_name = lu.game_name and r.data_type == 
+        "UNLOCKED" 
+        """)
+        print("O)   CREATED OVERVIEW VIEWS")
+    except Exception as e:
+        print("X)   FAILED TO CREATE THE VIEWS: ", e)
+
 
     # prod stats tables
-    for stat_type in valid_stats_type_kw:
-        createTable(stat_type, ",".join(
-            ["insertionDate text", "force text", "timestamp text",
-             "ticks numeric", "type text", "input real", "output real,"
-                                                         "PRIMARY KEY(insertionDate, "
-                                                         "force, "
-                                                         "timestamp, "
-                                                         "ticks, "
-                                                         "type)"]))
+    for stat_type in filter(
+            lambda key: valid_data_trees[key] == ["INPUT", "OUTPUT"],
+            valid_data_trees.keys()):
         try:
-            c.execute(f"CREATE VIEW IF NOT EXISTS {stat_type}_INPUT as SELECT " \
-                      f"insertionDate, force, timestamp, ticks, type, " \
-                      f"input AS value " \
-                      f"FROM {stat_type}")
-            print("O)   CREATED VIEW", stat_type + "_INPUT")
-
-            c.execute(f"CREATE VIEW IF NOT EXISTS {stat_type}_OUTPUT as " \
-                      f"SELECT " \
-                      f"insertionDate, force, timestamp, ticks, type, " \
-                      f"output AS value " \
-                      f"FROM {stat_type}")
-            print("O)   CREATED VIEW", stat_type + "_OUTPUT")
-
-            c.execute(f"CREATE VIEW IF NOT EXISTS {stat_type}_STOCK as SELECT " \
-                      f"insertionDate, force, timestamp, ticks, type, " \
-                      f"(input-output) AS value " \
-                      f"FROM {stat_type}")
-            print("O)   CREATED VIEW", stat_type + "_STOCK")
+            c.execute(f"""
+                CREATE VIEW IF NOT EXISTS {stat_type} AS 
+                SELECT ri.date, ri.game_name, ri.force, ri.ig_tick, ri.ig_date, 
+                ri.data_name, ri.value AS input, ro.value AS output, 
+                ri.value - ro.value AS stock
+                FROM raw_data ri
+                INNER JOIN (
+                    SELECT date, game_name, force, ig_tick, data_name, value
+                    FROM raw_data
+                    WHERE data_type = '{stat_type}' and data_subtype='OUTPUT'
+                ) ro
+                WHERE ri.date=ro.date and ri.game_name = ro.game_name and ri.ig_tick 
+                = ro.ig_tick and ri.force = ro.force and ri.data_type = '{stat_type}' and 
+                data_subtype='INPUT' and ri.data_name=ro.data_name
+                """)
+            print("O)   CREATED VIEW", stat_type)
 
             try:
-                c.execute(f"INSERT INTO stat_tables VALUES ('" \
-                          f"{stat_type}_INPUT', '{stat_type}', 'INPUT')")
-                print("O)   REGISTERED VIEW", stat_type + "_INPUT")
-
-                c.execute(f"INSERT INTO stat_tables VALUES ('" \
-                          f"{stat_type}_OUTPUT', '{stat_type}', 'OUTPUT')")
-                print("O)   REGISTERED VIEW", stat_type + "_OUTPUT")
-
-                c.execute(f"INSERT INTO stat_tables VALUES ('" \
-                          f"{stat_type}_STOCK', '{stat_type}', 'STOCK')")
-                print("O)   REGISTERED VIEW", stat_type + "_STOCK")
+                c.execute(f"INSERT INTO stat_views VALUES ('{stat_type}')")
+                print("O)   REGISTERED VIEW", stat_type)
 
             except Exception as e:
                 print("X)   FAILED TO REGISTER THE VIEWS", e)
         except Exception as e:
             print("X)   FAILED TO CREATE THE VIEWS: ", e)
 
-
-
-    # event with unique data
-    for event_type in valid_events_kw:
-        createTable(event_type, ",".join(
-            ["insertionDate text", "force text", "timestamp text",
-             "ticks numeric", "type text", "value text,"
-                                           "PRIMARY KEY("
-                                           "insertionDate, "
-                                           "force, "
-                                           "timestamp, "
-                                           "ticks, "
-                                           "type)"]))
-        try:
-            c.execute(f"INSERT INTO event_tables VALUES (?)", (event_type,))
-            print("O)   REGISTERED TABLE", event_type)
-        except Exception as e:
-            print("X)   FAILED TO REGISTER THE TABLE", e)
-
     DB.commit()
 
 
-def processData(force: str, datatype: str, data: [str], timestamp: str):
+def processData(date: str, game_name: str, force: str, ig_date: str,
+                ig_tick: int, data: [str]):
     global DB
     c = DB.cursor()
-    cache = {}
+
     # dealing with item names to numeric values
-    if datatype == "STATS":
-        current_type = None
-        current_section = None
-        for i in range(len(data)):
-            word = data[i]
-            if word in valid_stats_type_kw:
-                if current_type != None:
-                    for key in cache.keys():
-                        force, timestamp, timestampVal, data_name = key
-                        inputv = cache[key]["INPUT"]
-                        outputv = cache[key]["OUTPUT"]
-                        c.execute(f"INSERT INTO {current_type} " \
-                                  f"(insertionDate," \
-                                  f" force," \
-                                  f" timestamp," \
-                                  f" ticks," \
-                                  f" type," \
-                                  f" input," \
-                                  f" output)" \
-                                  f"VALUES " \
-                                  f"(datetime('now')," \
-                                  f" '{force}'," \
-                                  f" '{timestamp}'," \
-                                  f" {timestampVal}," \
-                                  f" '{data_name}'," \
-                                  f" {float(inputv)}," \
-                                  f" {float(outputv)})")
-                    cache = {}
-                current_type = word
-            elif word in valid_stats_section_kw:
-                current_section = word
+    data_type = None
+    data_subtype = None
+    for word in data:
+        if word in migration_values.keys():
+            data_type, data_subtype = migration_values[word]
+        elif word is None:
+            continue
+        elif word == '':
+            continue
+        elif word in valid_data_trees.keys():
+            data_type = word
+        elif word in valid_data_trees[data_type]:
+            data_subtype = word
+        elif data_subtype is not None and data_type is not None:
+            worddata = word.split(":")
+            if len(worddata) == 1:
+                # simple stat in format value
+                data_name = data_type
+                data_value = worddata[0]
             else:
-                worddata = word.split(":")
-                if len(worddata) == 1:
-                    # simple stat in format value
-                    data_name = current_type.lower()
-                    value = worddata[0]
-                else:
-                    # data in form name:value
-                    data_name, value = word.split(":")
-                # data value might be an integer or a float, so we just use a
-                # float everytime to keep fluid values exact
+                # data in form name:value
+                data_name, data_value = word.split(":")
+            # data value might be an integer or a float, so we just use a
+            # float everytime to keep fluid values exact
 
-                # We saves the data as two vectors:
-                # [name1, name2, name3,...] & [value1, value2, value3,...]
-                # if data is not present:insert
-                # is data is present: update
-                timestampVal = timestampStrToTicks(timestamp)
+            try:
+                c.execute(f"""INSERT INTO raw_data VALUES ('{date}', 
+                '{game_name}', '{force}', '{ig_date}', {ig_tick}, 
+                '{data_type}', '{data_subtype}', '{data_name}', '{data_value}')""")
+            except Exception as e:
+                print("Could not insert following data in the raw_data table:")
+                print(f"""('{date}', 
+                '{game_name}', '{force}', '{ig_date}', {ig_tick}, 
+                '{data_type}', '{data_subtype}', '{data_name}', '{data_value}')""")
+                print(e)
 
-                key = (force, timestamp, timestampVal, data_name)
-                if key not in cache.keys():
-                    cache[key] = {
-                        "INPUT":  0,
-                        "OUTPUT": 0
-                    }
-
-                if current_section == "INPUT":
-                    cache[key]["INPUT"] = value
-                else:
-                    cache[key]["OUTPUT"] = value
-
-
-
-    # Dealing with events and their types
-    elif datatype == "EVENT":
-        # data[0] = event type, onward is the event data
-        event_type = None
-        for i in range(len(data)):
-            word = data[i]
-            if word in valid_events_kw:
-                event_type = word
-            else:
-                worddata = word.split(":")
-                if len(worddata) == 1:
-                    # simple stat in format value
-                    data_name = event_type.lower()
-                    value = worddata[0]
-                else:
-                    # data in form name:value
-                    data_name, value = word.split(":")
-
-                c.execute(
-                    f"INSERT INTO {event_type} VALUES (datetime('now'), ?, "
-                    "?, ?, ?, ?)", (
-                    force, timestamp, timestampStrToTicks(timestamp), data_name,
-                    value))
     DB.commit()
 
 
@@ -206,7 +265,7 @@ def parseTimeStamp(timestamp: str):
     return (int(hh), int(mm), int(ss), int(tt))
 
 
-def timestampToStr(timestamp):
+def timestampToStr(timestamp: (int, int, int, int)):
     return "".join(
         [str(timestamp[0]), ":", str(timestamp[1]), ":", str(timestamp[2])])
 
@@ -219,87 +278,71 @@ def timestampStrToTicks(timestamp: str):
 def parseLineData(linestr: str):
     # format:
     # timestamp: ;typeofdata;force/eventtype;data;data;data;
-    linedata = linestr.split(";")
+    linedata = linestr[:-1:].split(";")
     # get the line timestamp
-    timestamp = parseTimeStamp(linedata[0])
-    datatype = linedata[1]
-    datainfo = linedata[2]
+    ig_date = timestampToStr(parseTimeStamp(linedata[0]))
+    force = linedata[2]
     data = linedata[3:]
 
-    if (datatype not in valid_datatypes):
-        raise Exception("Unknown datatype:" + datatype)
-    return (timestamp, datatype, datainfo, data)
+    return (ig_date, timestampStrToTicks(ig_date), force, data)
 
 
 def parseTechLine(linestr: str):
     # format => research-name:name;<unlocked-items;item-1;...;><unlocked-fluids
     # ;fluid-1;...;><prerequisite_researches;r_name-1;...;>
-    line = linestr.split(";")[:-1:]
+    line = linestr[:-1:].split(";")
     r_name = line[0].split(":")[1]
-    line = line[1::]
+    data = line[1::]
 
-    current_section = None
+    entries = []
+    data_type, data_subtype = None, None
 
-    unlocked = []
-    prereq_r_names = []
-
-    for word in line:
-        if word == "unlocked-items":
-            current_section = "SOLID"
-        elif word == "unlocked-fluids":
-            current_section = "FLUID"
-        elif word == "prerequisites-researches":
-            current_section = "RESEARCH"
+    for word in data:
+        if word in migration_values.keys():
+            data_type, data_subtype = migration_values[word]
+        elif word is None:
+            continue
+        elif word == '':
+            continue
+        elif word in valid_data_trees.keys():
+            data_type = word
+        elif word in valid_data_trees[data_type]:
+            data_subtype = word
         else:
-            if current_section == "SOLID":
-                unlocked.append(("SOLID", word))
-            elif current_section == "FLUID":
-                unlocked.append(("FLUID", word))
-            elif current_section == "RESEARCH":
-                prereq_r_names.append(word)
-            else:
-                raise Exception("UNKNOWN TECH DATA TYPE: " + word)
-    return (r_name, unlocked, prereq_r_names)
+            entries.append((data_type, data_subtype, r_name, word))
+    return entries
 
 
-def parseLogFile(logfilepath: str, techdatapath: str, gamename: str):
+def parseLogFile(logfilepath: str, techdatapath: str, game_name: str):
     # returns a dict with each force linked to a tuple containing an array of
     # timestamp and an array of each data contained at each timestamp
     global DB
-    DB = sqlite3.connect("resources/" + gamename + ".db")
+
+    DB = sqlite3.connect("resources/" + game_name + ".db")
 
     print("sqlite version", sqlite3.sqlite_version)
 
     prepareDbTables()
     c = DB.cursor()
+    date = c.execute("SELECT DATETIME('now');").fetchone()[0]
 
     print("Parsing log file data...")
     with open(logfilepath, "r") as logfile:
         for line in logfile.readlines():
-            timestamp, datatype, force, data = parseLineData(line)
-            c.execute(f"INSERT OR IGNORE INTO forces VALUES ('{force}') ")
-            DB.commit()
-
-            # removing the \n from the end of line
-            data = data[:-1:]
-            processData(force, datatype, data, timestampToStr(timestamp))
+            ig_date, ig_tick, force, data = parseLineData(line)
+            processData(date, game_name, force, ig_date, ig_tick, data)
 
     print("Parsing tech tree data...")
     with open(techdatapath, "r") as techfile:
         for line in techfile.readlines():
-            r_name, unlocked, prereq_r_names = parseTechLine(line)
-            c.execute(f"INSERT INTO researches VALUES ('{r_name}')")
-            DB.commit()
-
-            for unlock in unlocked:
-                c.execute(f"INSERT INTO research_unlock VALUES ('{r_name}', "
-                          f"'{unlock[0]}', '{unlock[1]}')")
+            entries = parseTechLine(line)
+            for entry in entries:
+                data_type, sub_type, data_name, data_value = entry
+                c.execute(f"""INSERT INTO raw_data VALUES ('{date}', 
+                '{game_name}', '{force}', '{ig_date}', {ig_tick}, 
+                '{data_type}', '{sub_type}', '{data_name}', '{data_value}')""")
                 DB.commit()
 
-            for prereq_r_name in prereq_r_names:
-                c.execute(f"INSERT INTO research_prereq VALUES ('{r_name}', "
-                          f"'{prereq_r_name}')")
-                DB.commit()
 
     DB.close()
     return
