@@ -39,6 +39,6 @@ on Powershell:
 Just as you would launch any other python script:
 
 ``` bash
-python .\src\FactoLogMiner.py <path to your history.log> <name of your game>
+python .\src\FactoLogMiner.py <path to your history.log> <path to your techdata file> <name of your game>
 ```
 
